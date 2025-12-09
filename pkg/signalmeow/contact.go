@@ -48,7 +48,9 @@ func (cli *Client) StoreContactDetailsAsContact(ctx context.Context, contactDeta
 		if contactDetails.GetNumber() != "" {
 			recipient.E164 = contactDetails.GetNumber()
 		}
-		recipient.ContactName = contactDetails.GetName()
+		if recipient.ContactName == "" {
+			recipient.ContactName = contactDetails.GetName()
+		}
 		//if profileKeyString := contactDetails.GetProfileKey(); profileKeyString != nil {
 		//	profileKey := libsignalgo.ProfileKey(profileKeyString)
 		//	recipient.Profile.Key = profileKey
