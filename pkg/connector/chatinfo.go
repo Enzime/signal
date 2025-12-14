@@ -19,7 +19,9 @@ package connector
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +49,22 @@ var (
 	_ bridgev2.ContactListingNetworkAPI      = (*SignalClient)(nil)
 	_ bridgev2.GhostDMCreatingNetworkAPI     = (*SignalClient)(nil)
 )
+
+// Signal username format: nickname.discriminator
+// - Nickname: 3-32 characters, alphanumeric and underscores, starting with a letter or underscore
+// - Discriminator: 2+ digits (like "01" through "99")
+var usernameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{2,31}\.[0-9]{2,}$`)
+
+// looksLikeUsername checks if the given string looks like a Signal username.
+// Signal usernames have the format "nickname.discriminator" (e.g., "alice.42").
+func looksLikeUsername(s string) bool {
+	// Quick check: must contain exactly one period and not start with + (phone numbers)
+	if !strings.Contains(s, ".") || strings.HasPrefix(s, "+") {
+		return false
+	}
+	// Check against the username regex pattern
+	return usernameRegex.MatchString(s)
+}
 
 var _ bridgev2.IdentifierValidatingNetwork = (*SignalConnector)(nil)
 
@@ -195,41 +213,59 @@ func (s *SignalClient) CreateChatWithGhost(ctx context.Context, ghost *bridgev2.
 	return resp.Chat, nil
 }
 
-func (s *SignalClient) ResolveIdentifier(ctx context.Context, number string, _ bool) (*bridgev2.ResolveIdentifierResponse, error) {
+func (s *SignalClient) ResolveIdentifier(ctx context.Context, identifier string, _ bool) (*bridgev2.ResolveIdentifierResponse, error) {
 	var aci, pni uuid.UUID
 	var e164Number uint64
 	var recipient *types.Recipient
-	serviceID, err := signalid.ParseUserIDAsServiceID(networkid.UserID(number))
+	serviceID, err := signalid.ParseUserIDAsServiceID(networkid.UserID(identifier))
 	if err != nil {
-		number, err = bridgev2.CleanPhoneNumber(number)
-		if err != nil {
-			return nil, bridgev2.WrapRespErr(err, mautrix.MInvalidParam)
-		}
-		e164Number, err = strconv.ParseUint(strings.TrimPrefix(number, "+"), 10, 64)
-		if err != nil {
-			return nil, bridgev2.WrapRespErr(fmt.Errorf("error parsing phone number: %w", err), mautrix.MInvalidParam)
-		}
-		e164String := fmt.Sprintf("+%d", e164Number)
-		if recipient, err = s.Client.ContactByE164(ctx, e164String); err != nil {
-			return nil, fmt.Errorf("error looking up number in local contact list: %w", err)
-		} else if recipient != nil && (recipient.ACI == uuid.Nil || !s.Client.Store.RecipientStore.IsUnregistered(ctx, libsignalgo.NewACIServiceID(recipient.ACI))) {
-			aci = recipient.ACI
-			pni = recipient.PNI
-		} else if resp, err := s.Client.LookupPhone(ctx, e164Number); err != nil {
-			return nil, fmt.Errorf("error looking up number on server: %w", err)
-		} else {
-			aci = resp[e164Number].ACI
-			pni = resp[e164Number].PNI
-			if aci == uuid.Nil && pni == uuid.Nil {
-				return nil, nil
-			}
-			recipient, err = s.Client.Store.RecipientStore.UpdateRecipientE164(ctx, aci, pni, e164String)
+		// Not a service ID, check if it's a username or phone number
+		if looksLikeUsername(identifier) {
+			// Try username lookup
+			aci, err = s.Client.LookupUsername(ctx, identifier)
 			if err != nil {
-				zerolog.Ctx(ctx).Err(err).Msg("Failed to save recipient entry after looking up phone")
+				if errors.Is(err, signalmeow.ErrUsernameNotFound) {
+					return nil, nil
+				}
+				return nil, fmt.Errorf("error looking up username on server: %w", err)
 			}
-			aci, pni = recipient.ACI, recipient.PNI
-			if aci != uuid.Nil {
-				s.Client.Store.RecipientStore.MarkUnregistered(ctx, libsignalgo.NewACIServiceID(aci), false)
+			recipient, err = s.Client.Store.RecipientStore.LoadAndUpdateRecipient(ctx, aci, uuid.Nil, nil)
+			if err != nil {
+				zerolog.Ctx(ctx).Err(err).Msg("Failed to load recipient entry after looking up username")
+				// Continue anyway, we have the ACI
+			}
+		} else {
+			// Try phone number lookup
+			identifier, err = bridgev2.CleanPhoneNumber(identifier)
+			if err != nil {
+				return nil, bridgev2.WrapRespErr(err, mautrix.MInvalidParam)
+			}
+			e164Number, err = strconv.ParseUint(strings.TrimPrefix(identifier, "+"), 10, 64)
+			if err != nil {
+				return nil, bridgev2.WrapRespErr(fmt.Errorf("error parsing phone number: %w", err), mautrix.MInvalidParam)
+			}
+			e164String := fmt.Sprintf("+%d", e164Number)
+			if recipient, err = s.Client.ContactByE164(ctx, e164String); err != nil {
+				return nil, fmt.Errorf("error looking up number in local contact list: %w", err)
+			} else if recipient != nil && (recipient.ACI == uuid.Nil || !s.Client.Store.RecipientStore.IsUnregistered(ctx, libsignalgo.NewACIServiceID(recipient.ACI))) {
+				aci = recipient.ACI
+				pni = recipient.PNI
+			} else if resp, err := s.Client.LookupPhone(ctx, e164Number); err != nil {
+				return nil, fmt.Errorf("error looking up number on server: %w", err)
+			} else {
+				aci = resp[e164Number].ACI
+				pni = resp[e164Number].PNI
+				if aci == uuid.Nil && pni == uuid.Nil {
+					return nil, nil
+				}
+				recipient, err = s.Client.Store.RecipientStore.UpdateRecipientE164(ctx, aci, pni, e164String)
+				if err != nil {
+					zerolog.Ctx(ctx).Err(err).Msg("Failed to save recipient entry after looking up phone")
+				}
+				aci, pni = recipient.ACI, recipient.PNI
+				if aci != uuid.Nil {
+					s.Client.Store.RecipientStore.MarkUnregistered(ctx, libsignalgo.NewACIServiceID(aci), false)
+				}
 			}
 		}
 	} else {

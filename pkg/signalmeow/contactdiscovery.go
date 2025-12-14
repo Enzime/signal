@@ -18,8 +18,10 @@ package signalmeow
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -257,4 +259,41 @@ func (cdc *ContactDiscoveryClient) handleResponse(ctx context.Context, msg []byt
 		cdc.Response = resp
 	}
 	return nil
+}
+
+var ErrUsernameNotFound = errors.New("username not found")
+
+type usernameLookupResponse struct {
+	UUID uuid.UUID `json:"uuid"`
+}
+
+// LookupUsername looks up a Signal user by their username (e.g., "alice.42").
+// Returns the user's ACI (Account Identity) UUID if found.
+func (cli *Client) LookupUsername(ctx context.Context, username string) (uuid.UUID, error) {
+	hash, err := libsignalgo.HashUsername(username)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to hash username: %w", err)
+	}
+
+	hashBase64 := base64.URLEncoding.EncodeToString(hash[:])
+	path := "/v1/accounts/username_hash/" + hashBase64
+
+	resp, err := cli.UnauthedWS.SendRequest(ctx, "GET", path, nil, nil)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to send username lookup request: %w", err)
+	}
+
+	if resp.GetStatus() == 404 {
+		return uuid.Nil, ErrUsernameNotFound
+	}
+	if resp.GetStatus() < 200 || resp.GetStatus() >= 300 {
+		return uuid.Nil, fmt.Errorf("username lookup returned status %d: %s", resp.GetStatus(), resp.GetMessage())
+	}
+
+	var result usernameLookupResponse
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to parse username lookup response: %w", err)
+	}
+
+	return result.UUID, nil
 }
