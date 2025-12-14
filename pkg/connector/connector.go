@@ -65,7 +65,7 @@ func (s *SignalConnector) Init(bridge *bridgev2.Bridge) {
 	s.MsgConv.LocationFormat = s.Config.LocationFormat
 	s.MsgConv.DisappearViewOnce = s.Config.DisappearViewOnce
 	s.MsgConv.ExtEvPolls = s.Config.ExtEvPolls
-	bridge.Commands.(*commands.Processor).AddHandlers(CmdDiscardSenderKey)
+	bridge.Commands.(*commands.Processor).AddHandlers(CmdDiscardSenderKey, CmdWhoami)
 }
 
 func (s *SignalConnector) SetMaxFileSize(maxSize int64) {

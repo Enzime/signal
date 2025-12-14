@@ -18,6 +18,8 @@ package connector
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/commands"
@@ -36,6 +38,16 @@ var CmdDiscardSenderKey = &commands.FullHandler{
 	},
 	RequiresPortal: true,
 	RequiresLogin:  true,
+}
+
+var CmdWhoami = &commands.FullHandler{
+	Func: fnWhoami,
+	Name: "whoami",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionGeneral,
+		Description: "Show your Signal username and other account info",
+	},
+	RequiresLogin: true,
 }
 
 func fnDiscardSenderKey(ce *commands.Event) {
@@ -70,4 +82,34 @@ func fnDiscardSenderKey(ce *commands.Event) {
 	} else {
 		ce.Reply("Reset sender key with distribution ID %s", distributionID)
 	}
+}
+
+func fnWhoami(ce *commands.Event) {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("You're not logged in")
+		return
+	}
+	client := login.Client.(*SignalClient)
+	if client.Client == nil || client.Client.Store == nil {
+		ce.Reply("Not connected to Signal")
+		return
+	}
+	store := client.Client.Store
+	var parts []string
+	if store.AccountRecord != nil {
+		if username := store.AccountRecord.GetUsername(); username != "" {
+			parts = append(parts, fmt.Sprintf("**Username:** %s", username))
+		}
+		givenName := store.AccountRecord.GetGivenName()
+		familyName := store.AccountRecord.GetFamilyName()
+		if givenName != "" || familyName != "" {
+			parts = append(parts, fmt.Sprintf("**Name:** %s", strings.TrimSpace(givenName+" "+familyName)))
+		}
+	}
+	if store.Number != "" {
+		parts = append(parts, fmt.Sprintf("**Phone:** %s", store.Number))
+	}
+	parts = append(parts, fmt.Sprintf("**UUID:** %s", store.ACI))
+	ce.Reply(strings.Join(parts, "  \n"))
 }
