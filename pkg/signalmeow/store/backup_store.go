@@ -161,7 +161,9 @@ func (s *sqlStore) AddBackupRecipient(ctx context.Context, recipient *backuppb.R
 				if dest.Contact.ProfileGivenName != nil || dest.Contact.ProfileFamilyName != nil {
 					recipient.Profile.Name = strings.TrimSpace(fmt.Sprintf("%s %s", dest.Contact.GetProfileGivenName(), dest.Contact.GetProfileFamilyName()))
 				}
-				if dest.Contact.SystemGivenName != "" || dest.Contact.SystemFamilyName != "" {
+				if dest.Contact.SystemNickname != "" {
+					recipient.ContactName = dest.Contact.SystemNickname
+				} else if dest.Contact.SystemGivenName != "" || dest.Contact.SystemFamilyName != "" {
 					recipient.ContactName = strings.TrimSpace(fmt.Sprintf("%s %s", dest.Contact.SystemGivenName, dest.Contact.SystemFamilyName))
 				}
 				if dest.Contact.ProfileSharing && !ptr.Val(recipient.Whitelisted) {
