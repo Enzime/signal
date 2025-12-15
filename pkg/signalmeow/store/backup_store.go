@@ -161,6 +161,9 @@ func (s *sqlStore) AddBackupRecipient(ctx context.Context, recipient *backuppb.R
 				if dest.Contact.ProfileGivenName != nil || dest.Contact.ProfileFamilyName != nil {
 					recipient.Profile.Name = strings.TrimSpace(fmt.Sprintf("%s %s", dest.Contact.GetProfileGivenName(), dest.Contact.GetProfileFamilyName()))
 				}
+				if dest.Contact.SystemGivenName != "" || dest.Contact.SystemFamilyName != "" {
+					recipient.ContactName = strings.TrimSpace(fmt.Sprintf("%s %s", dest.Contact.SystemGivenName, dest.Contact.SystemFamilyName))
+				}
 				if dest.Contact.ProfileSharing && !ptr.Val(recipient.Whitelisted) {
 					recipient.Whitelisted = ptr.Ptr(true)
 					changed = true
@@ -170,6 +173,7 @@ func (s *sqlStore) AddBackupRecipient(ctx context.Context, recipient *backuppb.R
 					oldRecipient.E164 != recipient.E164 ||
 					oldRecipient.Profile.Key != recipient.Profile.Key ||
 					oldRecipient.Profile.Name != recipient.Profile.Name ||
+					oldRecipient.ContactName != recipient.ContactName ||
 					oldRecipient.Blocked != recipient.Blocked
 				return
 			})
